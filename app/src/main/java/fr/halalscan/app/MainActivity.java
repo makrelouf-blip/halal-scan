@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -15,11 +16,17 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import androidx.core.content.FileProvider;
 import androidx.webkit.WebViewAssetLoader;
+
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -29,9 +36,15 @@ import java.nio.charset.StandardCharsets;
 public class MainActivity extends Activity {
 
     private static final int REQ_CAMERA = 42;
+    private static final int REQ_CAMERA_OCR = 43;
+    private static final int REQ_TAKE_PHOTO = 7;
+    private static final int REQ_PICK_PHOTO = 8;
     private static final String HOME = "https://appassets.androidplatform.net/assets/www/index.html";
+
     private WebView web;
     private PermissionRequest pendingRequest;
+    private String ocrId;
+    private Uri photoUri;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,14 +97,57 @@ public class MainActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        boolean granted = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
         if (requestCode == REQ_CAMERA && pendingRequest != null) {
-            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
-                pendingRequest.grant(pendingRequest.getResources());
-            } else {
-                pendingRequest.deny();
-            }
+            if (granted) pendingRequest.grant(pendingRequest.getResources());
+            else pendingRequest.deny();
             pendingRequest = null;
+        } else if (requestCode == REQ_CAMERA_OCR) {
+            if (granted) launchCamera();
+            else sendOcr(false, "Autorisation caméra refusée.");
         }
+    }
+
+    // ---------- Lecture du texte de l'étiquette (OCR, hors ligne) ----------
+
+    private void launchCamera() {
+        try {
+            File dir = new File(getCacheDir(), "photos");
+            if (!dir.exists()) dir.mkdirs();
+            File f = new File(dir, "etiquette.jpg");
+            photoUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", f);
+            Intent i = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            i.putExtra(MediaStore.EXTRA_OUTPUT, photoUri);
+            i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(i, REQ_TAKE_PHOTO);
+        } catch (Exception e) {
+            sendOcr(false, "Impossible d'ouvrir l'appareil photo : " + e.getMessage());
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_TAKE_PHOTO && requestCode != REQ_PICK_PHOTO) return;
+        if (resultCode != RESULT_OK) { sendOcr(false, "Photo annulée."); return; }
+        Uri u = requestCode == REQ_TAKE_PHOTO ? photoUri : (data != null ? data.getData() : null);
+        if (u == null) { sendOcr(false, "Aucune image reçue."); return; }
+        try {
+            InputImage image = InputImage.fromFilePath(this, u);
+            TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                    .process(image)
+                    .addOnSuccessListener(text -> sendOcr(true, text.getText()))
+                    .addOnFailureListener(e -> sendOcr(false, "Lecture impossible : " + e.getMessage()));
+        } catch (Exception e) {
+            sendOcr(false, "Image illisible : " + e.getMessage());
+        }
+    }
+
+    private void sendOcr(boolean ok, String text) {
+        if (ocrId == null) return;
+        final String js = "window.__bridgeCb(" + JSONObject.quote(ocrId) + "," + ok + "," + JSONObject.quote(text == null ? "" : text) + ")";
+        ocrId = null;
+        runOnUiThread(() -> web.evaluateJavascript(js, null));
     }
 
     @Override
@@ -100,7 +156,7 @@ public class MainActivity extends Activity {
         else super.onBackPressed();
     }
 
-    /** Pont Java -> JS : requêtes réseau vers Open Food Facts et le fichier de règles. */
+    /** Pont Java -> JS : réseau (Open Food Facts, règles) et lecture d'étiquette. */
     private class Bridge {
         @JavascriptInterface
         public void get(final String id, final String url) {
@@ -135,6 +191,32 @@ public class MainActivity extends Activity {
                 final String js = "window.__bridgeCb(" + JSONObject.quote(id) + "," + ok + "," + JSONObject.quote(body) + ")";
                 runOnUiThread(() -> web.evaluateJavascript(js, null));
             }).start();
+        }
+
+        @JavascriptInterface
+        public void ocrCamera(final String id) {
+            runOnUiThread(() -> {
+                ocrId = id;
+                if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA_OCR);
+                } else {
+                    launchCamera();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void ocrGallery(final String id) {
+            runOnUiThread(() -> {
+                ocrId = id;
+                try {
+                    Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                    i.setType("image/*");
+                    startActivityForResult(Intent.createChooser(i, "Choisir une photo de l'étiquette"), REQ_PICK_PHOTO);
+                } catch (Exception e) {
+                    sendOcr(false, "Impossible d'ouvrir la galerie : " + e.getMessage());
+                }
+            });
         }
     }
 }
