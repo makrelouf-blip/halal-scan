@@ -30,9 +30,20 @@ jobs:
           cp package/html5-qrcode.min.js app/src/main/assets/www/
 
       - name: Compiler
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          gradle assembleDebug --no-daemon
-          cp app/build/outputs/apk/debug/app-debug.apk HalalScan.apk
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+            gradle assembleRelease --no-daemon
+            cp app/build/outputs/apk/release/app-release.apk HalalScan.apk
+          else
+            echo "::warning::Pas de clé de signature : version de test (debug)."
+            gradle assembleDebug --no-daemon
+            cp app/build/outputs/apk/debug/app-debug.apk HalalScan.apk
+          fi
 
       - name: Garder l'APK (onglet Actions)
         uses: actions/upload-artifact@v4
@@ -47,3 +58,10 @@ jobs:
           name: Halal Scan v1.${{ github.run_number }}
           files: HalalScan.apk
           make_latest: true
+          body: |
+            📥 Télécharger : HalalScan.apk (ci-dessous, dans « Assets »)
+
+            Installation : ouvre le fichier sur ton téléphone Android, autorise « Installer des applis inconnues », puis installe.
+            Si Play Protect affiche un avertissement, choisis « Installer quand même ».
+
+            Halal Scan aide à repérer les ingrédients à risque ; il ne remplace pas une certification halal.
