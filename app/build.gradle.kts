@@ -25,6 +25,7 @@ android {
 }
 
 dependencies {
+    implementation(platform("org.jetbrains.kotlin:kotlin-bom:1.8.22"))
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.core:core:1.13.1")
     implementation("com.google.mlkit:text-recognition:16.0.1")
