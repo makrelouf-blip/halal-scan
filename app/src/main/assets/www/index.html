@@ -58,6 +58,13 @@ textarea{min-height:130px;resize:vertical}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes s{to{transform:rotate(360deg)}}
 a{color:var(--accent)}
+.two{display:flex;gap:8px}
+.two .btn{margin-top:0}
+.info{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:14px}
+.info:first-of-type{border-top:0}
+.info span:first-child{color:var(--muted)}
+.info span:last-child{text-align:right;font-weight:500}
+details summary{cursor:pointer;color:var(--muted);font-size:13px}
 </style>
 </head>
 <body>
@@ -69,7 +76,7 @@ a{color:var(--accent)}
 
   <div class="tabs">
     <button data-p="pScan" class="on">📷 Scanner</button>
-    <button data-p="pText">✍️ Texte</button>
+    <button data-p="pText">📄 Étiquette</button>
     <button data-p="pHist">🕘 Historique</button>
   </div>
 
@@ -86,7 +93,13 @@ a{color:var(--accent)}
 
   <section id="pText" class="hidden">
     <div class="card">
-      <p class="label">Colle ou tape les ingrédients</p>
+      <p class="label">Scanner le texte de l'étiquette</p>
+      <div class="two">
+        <button id="ocrCam" class="btn">📷 Prendre en photo</button>
+        <button id="ocrGal" class="btn sec">🖼️ Galerie</button>
+      </div>
+      <p class="note" style="margin:8px 0 14px">Photographie la liste des ingrédients bien à plat, avec la mention du fabricant si possible. Le texte est lu sur le téléphone, sans internet.</p>
+      <p class="label">Ou colle / corrige les ingrédients</p>
       <input id="pname" placeholder="Nom du produit (facultatif)" style="margin-bottom:8px">
       <textarea id="ing" placeholder="Ex : sucre, beurre de cacao, lait entier en poudre, émulsifiant (E471), arôme…"></textarea>
       <button id="goText" class="btn">Analyser</button>
@@ -117,7 +130,7 @@ a{color:var(--accent)}
 //  (le dépôt doit être public pour que la mise à jour fonctionne)
 // =========================================================
 const RULES_URL = "https://raw.githubusercontent.com/makrelouf-blip/halal-scan/main/app/src/main/assets/www/rules.json";
-const OFF_FIELDS = "product_name,product_name_fr,brands,image_front_small_url,ingredients_text_fr,ingredients_text,additives_tags,labels_tags,labels,ingredients_analysis_tags";
+const OFF_FIELDS = "product_name,product_name_fr,generic_name_fr,brands,brand_owner,manufacturing_places,origins,emb_codes,countries,image_front_small_url,ingredients_text_fr,ingredients_text,additives_tags,labels_tags,labels,ingredients_analysis_tags";
 
 // ---------- Réseau (pont Android, ou fetch dans un navigateur) ----------
 const pending = {}; let reqId = 0;
@@ -184,6 +197,66 @@ function analyse({text, additives = [], labels = '', vegan = false}){
   return {verdict, cls, msg, items: found};
 }
 
+// ---------- Pays : préfixe du code-barres (GS1) ----------
+const GS1 = [[0,19,'États-Unis / Canada'],[30,39,'États-Unis / Canada'],[60,139,'États-Unis / Canada'],[300,379,'France'],[380,380,'Bulgarie'],[383,383,'Slovénie'],[385,385,'Croatie'],[387,387,'Bosnie-Herzégovine'],[389,389,'Monténégro'],[400,440,'Allemagne'],[450,459,'Japon'],[460,469,'Russie'],[471,471,'Taïwan'],[474,474,'Estonie'],[475,475,'Lettonie'],[476,476,'Azerbaïdjan'],[477,477,'Lituanie'],[479,479,'Sri Lanka'],[480,480,'Philippines'],[482,482,'Ukraine'],[484,484,'Moldavie'],[485,485,'Arménie'],[486,486,'Géorgie'],[487,487,'Kazakhstan'],[489,489,'Hong Kong'],[490,499,'Japon'],[500,509,'Royaume-Uni'],[520,521,'Grèce'],[528,528,'Liban'],[529,529,'Chypre'],[530,530,'Albanie'],[531,531,'Macédoine du Nord'],[535,535,'Malte'],[539,539,'Irlande'],[540,549,'Belgique / Luxembourg'],[560,560,'Portugal'],[569,569,'Islande'],[570,579,'Danemark'],[590,590,'Pologne'],[594,594,'Roumanie'],[599,599,'Hongrie'],[600,601,'Afrique du Sud'],[603,603,'Ghana'],[608,608,'Bahreïn'],[609,609,'Maurice'],[611,611,'Maroc'],[613,613,'Algérie'],[615,615,'Nigeria'],[616,616,'Kenya'],[618,618,'Côte d\'Ivoire'],[619,619,'Tunisie'],[621,621,'Syrie'],[622,622,'Égypte'],[624,624,'Libye'],[625,625,'Jordanie'],[626,626,'Iran'],[627,627,'Koweït'],[628,628,'Arabie saoudite'],[629,629,'Émirats arabes unis'],[640,649,'Finlande'],[690,699,'Chine'],[700,709,'Norvège'],[729,729,'Israël'],[730,739,'Suède'],[750,750,'Mexique'],[754,755,'Canada'],[760,769,'Suisse'],[770,771,'Colombie'],[773,773,'Uruguay'],[775,775,'Pérou'],[779,779,'Argentine'],[780,780,'Chili'],[789,790,'Brésil'],[800,839,'Italie'],[840,849,'Espagne'],[850,850,'Cuba'],[858,858,'Slovaquie'],[859,859,'Tchéquie'],[860,860,'Serbie'],[868,869,'Turquie'],[870,879,'Pays-Bas'],[880,880,'Corée du Sud'],[885,885,'Thaïlande'],[888,888,'Singapour'],[890,890,'Inde'],[893,893,'Viêt Nam'],[896,896,'Pakistan'],[899,899,'Indonésie'],[900,919,'Autriche'],[930,939,'Australie'],[940,949,'Nouvelle-Zélande'],[955,955,'Malaisie']];
+function gs1Country(code){
+  let c = String(code); if(c.length === 12) c = '0' + c;
+  if(c.length < 8) return '';
+  const p = parseInt(c.slice(0,3), 10);
+  const hit = GS1.find(([a,b]) => p >= a && p <= b);
+  return hit ? hit[2] : '';
+}
+// Code emballeur européen (ex. « FR 72.264.050 CE ») -> pays de l'usine
+const ISO = {FR:'France',DE:'Allemagne',ES:'Espagne',IT:'Italie',BE:'Belgique',NL:'Pays-Bas',PL:'Pologne',PT:'Portugal',IE:'Irlande',AT:'Autriche',DK:'Danemark',GR:'Grèce',EL:'Grèce',HU:'Hongrie',RO:'Roumanie',BG:'Bulgarie',CZ:'Tchéquie',SK:'Slovaquie',LU:'Luxembourg',UK:'Royaume-Uni',GB:'Royaume-Uni',CH:'Suisse',SE:'Suède',FI:'Finlande',LT:'Lituanie',LV:'Lettonie',EE:'Estonie',SI:'Slovénie',HR:'Croatie',CY:'Chypre',MT:'Malte'};
+function embCountry(emb){
+  const m = /\b([A-Z]{2})\s?[\d.\s\-]{4,}\s?(CE|EC|EG|EK|EY|EF|ES)\b/.exec(String(emb||'').toUpperCase());
+  return m && ISO[m[1]] ? ISO[m[1]] : '';
+}
+function cleanTags(s){ return String(s||'').split(',').map(x => x.trim().replace(/^[a-z]{2}:/,'').replace(/-/g,' ')).filter(Boolean).map(x => x.charAt(0).toUpperCase() + x.slice(1)).join(', '); }
+
+// ---------- Lecture d'une étiquette (texte OCR) ----------
+function foldKeep(str){ // minuscules sans accents, même longueur que la chaîne d'origine
+  return [...str].map(ch => { const d = ch.normalize('NFD').replace(/[\u0300-\u036f]/g,'') || ch; return d.toLowerCase().charAt(0) || ' '; }).join('');
+}
+function extractLabel(raw){
+  const chars = [...String(raw).replace(/\r/g,'').replace(/\s*\n\s*/g,' ').replace(/\s{2,}/g,' ')];
+  const flat = chars.join(''), nn = foldKeep(flat);
+  const cut = (a,b) => chars.slice(a,b).join('').trim();
+  let ingredients = '';
+  const m = /ingr[e]?dients?\s*[:;.\-]?\s*/.exec(nn) || /ingredienti\s*[:;.]?\s*|ingredientes\s*[:;.]?\s*|zutaten\s*[:;.]?\s*/.exec(nn);
+  if(m){
+    const start = m.index + m[0].length;
+    const rest = nn.slice(start);
+    const stop = /(valeurs? nutritionnelles?|informations? nutritionnelles?|declaration nutritionnelle|nutrition|pour 100 ?(g|ml)|energie|a conserver|conserver (au|a l|dans|a t)|apres ouverture|a consommer|poids net|poids :|fabrique (en|par|pour|au|dans)|elabore|emballe|conditionne par|distribue par|importe par|ddm|dluo|produit certifie|certifie halal|certification|ingredients?\s*:|zutaten|ingredienti|ingredientes|\blot\b)/.exec(rest);
+    let end = stop ? start + stop.index : Math.min(chars.length, start + 1200);
+    if(end - start > 1500) end = start + 1500;
+    ingredients = cut(start, end).replace(/[\s.,;]+$/,'');
+  }
+  // Fabricant
+  let maker = '';
+  const mk = /(fabrique (?:en|au|aux) [a-z' \-]{3,25}? par|fabrique (?:par|pour)|elabore (?:par|pour)|conditionne (?:par|pour)|emballe (?:par|pour)|distribue par|importe (?:par|en france par)|produit par|manufactured (?:by|for)|produced by|made by|packed (?:by|for)|hergestellt (?:von|fur))\s*[:\-]?\s*/.exec(nn);
+  if(mk){
+    const a = mk.index + mk[0].length;
+    const tail = nn.slice(a, a + 120);
+    const e = /(\s-\s|\.\s|\bpour\b|\b\d{5}\b|\bcs\s?\d|\btel\b|\bwww\.|\bconserver\b|$)/.exec(tail);
+    const zip = /\b\d{5}\s+[a-z\- ']{2,30}/.exec(tail);
+    let end = a + (e ? e.index : 80);
+    if(zip && zip.index < 100) end = a + zip.index + zip[0].length;
+    maker = cut(a, end).replace(/[\s,;:.\-]+$/,'');
+  }
+  // Pays
+  let country = '';
+  const pc = /(fabrique en|produit en|produit d[e']|elabore en|transforme en|origine\s*[:\-]?|pays d'origine\s*[:\-]?|made in|product of|produced in|hergestellt in|prodotto in|fabricado en)\s*/.exec(nn);
+  if(pc){
+    const a = pc.index + pc[0].length;
+    const e = /[.,;:()\/]|\s(et|par|pour|a partir|avec|lot|ddm|a consommer)\b/.exec(nn.slice(a, a + 40));
+    country = cut(a, a + (e ? e.index : 25)).replace(/[\s\-]+$/,'');
+    if(country.length > 30) country = country.slice(0, 30);
+  }
+  const emb = embCountry(flat);
+  return { ingredients, maker, country, emb, raw: flat };
+}
+
 // ---------- Interface ----------
 const $ = id => document.getElementById(id);
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -203,6 +276,12 @@ function render(res, prod){
     h += `<div class="card prod">${prod.img ? `<img src="${esc(prod.img)}" alt="">` : ''}<div><b>${esc(prod.name || 'Produit')}</b><small class="note">${esc(prod.brand || '')}${prod.code ? ' · ' + esc(prod.code) : ''}</small></div></div>`;
   }
   h += `<div class="verdict ${vc}"><h2>${icon} ${esc(res.verdict)}</h2><p>${esc(res.msg)}</p></div>`;
+  const info = (prod && prod.info || []).filter(x => x[1]);
+  if(info.length){
+    h += `<div class="card"><p class="label">Produit, fabricant et origine</p>${info.map(x => `<div class="info"><span>${esc(x[0])}</span><span>${esc(x[1])}</span></div>`).join('')}`;
+    if(prod.infoNote) h += `<p class="note" style="margin:8px 0 0">${esc(prod.infoNote)}</p>`;
+    h += `</div>`;
+  }
   if(res.items.length){
     h += `<div class="card"><p class="label">Points relevés</p>`;
     for(const it of res.items){ const d = it.s === 'no' ? 'd-no' : it.s === 'doubt' ? 'd-doubt' : 'd-ok';
@@ -210,6 +289,7 @@ function render(res, prod){
     h += `</div>`;
   }
   if(prod && prod.ingredients){ h += `<div class="card"><p class="label">Ingrédients</p><p style="margin:0;font-size:14px">${esc(prod.ingredients)}</p></div>`; }
+  if(prod && prod.raw){ h += `<div class="card"><details><summary>Texte lu sur l'étiquette</summary><p style="font-size:13px;white-space:pre-wrap">${esc(prod.raw)}</p></details></div>`; }
   if(prod && prod.code){ h += `<p class="note" style="text-align:center"><a href="https://world.openfoodfacts.org/product/${esc(prod.code)}">Voir ou corriger la fiche sur Open Food Facts</a></p>`; }
   $('out').innerHTML = h;
   $('out').scrollIntoView({behavior:'smooth'});
@@ -226,17 +306,29 @@ async function lookup(code){
   try{
     const j = JSON.parse(await httpGet(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=${OFF_FIELDS}`));
     if(!j || j.status !== 1 || !j.product){
-      err(`Produit ${esc(code)} introuvable dans Open Food Facts.<br><br><span style="color:var(--ink)">Utilise l'onglet <b>Texte</b> pour coller les ingrédients, ou ajoute le produit sur l'appli Open Food Facts pour aider la communauté.</span>`);
+      err(`Produit ${esc(code)} introuvable dans Open Food Facts.<br><br><span style="color:var(--ink)">Utilise l'onglet <b>Étiquette</b> pour photographier les ingrédients, ou ajoute le produit sur l'appli Open Food Facts pour aider la communauté.</span>`);
       return;
     }
     const p = j.product;
     const ingredients = p.ingredients_text_fr || p.ingredients_text || '';
-    const prod = { code, name: p.product_name_fr || p.product_name, brand: p.brands, img: p.image_front_small_url, ingredients };
+    const prod = { code, name: p.product_name_fr || p.product_name || p.generic_name_fr, brand: p.brands, img: p.image_front_small_url, ingredients };
+    const embC = embCountry(p.emb_codes);
+    prod.info = [
+      ['Produit', prod.name],
+      ['Marque', p.brands],
+      ['Fabricant', p.brand_owner],
+      ['Lieu de fabrication', p.manufacturing_places],
+      ['Origine des ingrédients', p.origins],
+      ['Code emballeur', p.emb_codes ? p.emb_codes + (embC ? ' (' + embC + ')' : '') : ''],
+      ['Code-barres enregistré en', gs1Country(code)],
+      ['Vendu en', cleanTags(p.countries)]
+    ];
+    prod.infoNote = 'Le pays du code-barres est celui de l\'entreprise qui l\'a enregistré, pas forcément le pays de fabrication.';
     const labels = (p.labels_tags || []).join(' ') + ' ' + (p.labels || '');
     const vegan = (p.ingredients_analysis_tags || []).includes('en:vegan');
     if(!ingredients){
       const res = analyse({text:'', additives: p.additives_tags || [], labels, vegan});
-      if(res.cls !== 'no' && !/certifi/.test(res.verdict)){ res.verdict = 'Ingrédients inconnus'; res.cls = 'doubt'; res.msg = 'La fiche n\'a pas encore la liste des ingrédients. Lis l\'étiquette ou utilise l\'onglet Texte.'; }
+      if(res.cls !== 'no' && !/certifi/.test(res.verdict)){ res.verdict = 'Ingrédients inconnus'; res.cls = 'doubt'; res.msg = 'La fiche n\'a pas encore la liste des ingrédients. Utilise l\'onglet Étiquette pour photographier les ingrédients.'; }
       render(res, prod); return;
     }
     render(analyse({text: ingredients, additives: p.additives_tags || [], labels, vegan}), prod);
@@ -271,10 +363,41 @@ $('codeBtn').onclick = () => lookup($('code').value);
 $('code').addEventListener('keydown', e => { if(e.key === 'Enter') lookup($('code').value); });
 
 // ---------- Texte ----------
+let lastLabel = null;
+function analyseLabel(lab, name){
+  const ingText = lab.ingredients || lab.raw;
+  const res = analyse({text: ingText, labels: lab.raw});
+  if(!lab.ingredients && res.cls === 'ok'){ res.cls = 'doubt'; res.verdict = 'À vérifier'; res.msg = 'La liste d\'ingrédients n\'a pas été repérée clairement. Vérifie le texte lu ou reprends la photo.'; }
+  render(res, { name, ingredients: lab.ingredients, raw: lab.raw, info: [
+    ['Produit', name],
+    ['Fabricant / distributeur', lab.maker],
+    ['Pays de fabrication', lab.country],
+    ['Pays de l\'usine (code emballeur)', lab.emb]
+  ], infoNote: lab.maker || lab.country ? '' : 'Fabricant et pays non trouvés sur la photo : photographie aussi la mention « Fabriqué par… », ou scanne le code-barres.' });
+}
 $('goText').onclick = () => {
   const txt = $('ing').value.trim(); if(!txt){ err('Ajoute la liste des ingrédients.'); return; }
-  render(analyse({text: txt, labels: txt}), { name: $('pname').value.trim() });
+  const lab = extractLabel(txt);
+  if(!lab.ingredients) lab.ingredients = txt;
+  if(lastLabel && txt === lastLabel.ingredients){ lab.maker = lastLabel.maker; lab.country = lastLabel.country; lab.emb = lastLabel.emb; lab.raw = lastLabel.raw; }
+  analyseLabel(lab, $('pname').value.trim());
 };
+function ocr(kind){
+  if(!(window.Android && Android.ocrCamera)){ err('Le scan d\'étiquette fonctionne dans l\'application Android.'); return; }
+  stopCam();
+  const id = 'o' + (++reqId);
+  busy('Lecture de l\'étiquette…');
+  new Promise((res, rej) => { pending[id] = {res, rej}; kind === 'cam' ? Android.ocrCamera(id) : Android.ocrGallery(id); })
+    .then(text => {
+      if(!text || text.trim().length < 5){ err('Aucun texte lisible. Reprends la photo plus près, bien éclairée et à plat.'); return; }
+      const lab = extractLabel(text); lastLabel = lab;
+      $('ing').value = lab.ingredients || lab.raw;
+      analyseLabel(lab, $('pname').value.trim());
+    })
+    .catch(e => { if(/annul/i.test(e.message)) $('out').innerHTML = ''; else err(esc(e.message)); });
+}
+$('ocrCam').onclick = () => ocr('cam');
+$('ocrGal').onclick = () => ocr('gal');
 
 // ---------- Historique ----------
 function getHist(){ try{ return JSON.parse(localStorage.getItem('halalHist') || '[]'); }catch(e){ return []; } }
