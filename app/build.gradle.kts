@@ -14,8 +14,24 @@ android {
         versionName = "1.1"
     }
 
+    // Clé de signature fournie par GitHub (secrets KEYSTORE_B64 / KEYSTORE_PASSWORD)
+    val ksFile = System.getenv("KEYSTORE_FILE")
+    signingConfigs {
+        create("release") {
+            if (ksFile != null) {
+                storeFile = file(ksFile)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = "halalscan"
+                keyPassword = System.getenv("KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
-        release { isMinifyEnabled = false }
+        release {
+            isMinifyEnabled = false
+            if (ksFile != null) signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     compileOptions {
